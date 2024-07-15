@@ -32,6 +32,9 @@ from .utilities import readXYZfile
 from .colorSchemes import buildSMVcolormap
 from .smokeviewParser import parseSMVFile
 
+# Added by Dushyant on July 15th
+from .utilities import GetSMVGrid
+
 def time2str(time, decimals=2):
     """Converts a timestamp to a string
     
@@ -745,7 +748,82 @@ def readSLCF3Ddata(chid, resultDir, quantityToExport,
     return grid_abs, data_abs, times3D[0]
 
 
+def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
+                   time=None, dt=None):
+    print("here")
+    if '.zip' in resultDir:
+        sl_files = getFileListFromZip(resultDir, chid, 'sf')
+    else:
+        sl_files = glob.glob("%s%s%s*.sf"%(resultDir, os.sep, chid))
+    print(sl_files)
+    grids = defaultdict(bool)
+    endianness = getEndianness(resultDir, chid)
+    datatype = getDatatypeByEndianness(np.float32, endianness)
 
+    grid_coords, xGrid,yGrid,zGrid = GetSMVGrid("%s%s%s.smv"%(resultDir,os.sep,chid))
+    print(xGrid.shape,yGrid.shape,zGrid.shape)
+    datas2D = []
+    lims2D = []
+    coords2D = []
+    times2D = []
+    for sl_file in sl_files:
+        mesh = sl_file.split(chid)[-1].split('.sf')[0].replace('_','')
+        meshStr = "%s"%(chid) if mesh == '' else "%s_%s"%(chid, mesh)
+        # print(mesh,meshStr)
+        timesSLCF = readSLCFtimes(sl_file, None, endianness)
+        # print(timesSLCF)
+        times = []
+        f = zopen(sl_file)
+        
+        qty, sName, uts, iX, eX, iY, eY, iZ, eZ = readSLCFheader(f, endianness)
+        # Check if slice is correct quantity
+        correctQuantity = (qty == quantityToExport)
+        # Check if slice is 2-dimensional
+        threeDimSlice = (eX-iX > 0) and (eY-iY > 0) and (eZ-iZ > 0)
+        if correctQuantity and not threeDimSlice:
+            print(qty, sName)
+            (NX, NY, NZ) = (eX-iX, eY-iY, eZ-iZ)
+            print("2-D slice:", sl_file)
+            shape = (NX+1, NY+1, NZ+1)
+            if time == None:
+                NT = len(timesSLCF)
+                datas2 = np.zeros((NX+1, NY+1, NZ+1, NT), dtype=np.float32)
+                for i in range(0, NT):
+                    t, data = readNextTime(f, NX, NY, NZ, datatype)
+                    data = np.reshape(data, shape, order='F')
+                    datas2[:, :, :, i] = np.array(data, dtype=np.float32)
+                times = timesSLCF
+            elif (time != None) and (dt == None):
+                datas2 = np.zeros((NX+1, NY+1, NZ+1, 1), dtype=np.float32)
+                i = np.argmin(abs(timesSLCF-time))
+                f.seek(i * 4 * (5 + (NX+1) * (NY+1) * (NZ+1)), 1)
+                t, data = readNextTime(f, NX, NY, NZ, datatype)
+                data = np.reshape(data, shape, order='F')
+                datas2[:, :, :, 0] = np.array(data, dtype=np.float32)
+                times = [timesSLCF[i]]
+            elif (time != None) and (dt != None):
+                datas2 = np.zeros((NX+1, NY+1, NZ+1, 1), dtype=np.float32)
+                i = np.argmin(abs(timesSLCF - (time - dt/2)))
+                j = np.argmin(abs(timesSLCF - (time + dt/2)))
+                f.seek(i * 4 * (5 + (NX+1) * (NY+1) * (NZ+1)), 1)
+                for ii in range(i, j+1):
+                    t, data = readNextTime(f, NX, NY, NZ, datatype)
+                    data = np.reshape(data, shape, order='F')
+                    datas2[:, :, :, 0] += np.array(data, dtype=np.float32)
+                if j - i > 0:
+                    datas2[:, :, :, 0] = datas2[:, :, :, 0] / (j-i)
+                times = [timesSLCF[i]]
+            lims2D.append([iX, eX, iY, eY, iZ, eZ])
+            datas2D.append(datas2)
+            coords2D.append([xGrid[iX, iY, iZ],
+                             yGrid[iX, iY, iZ],
+                             zGrid[iX, iY, iZ]])
+            times2D.append(np.array(times))
+            timesOut = np.array(times)
+            # print(np.array(datas2D).shape)
+        f.close()
+        # 
+        # exit()
 
 
 def readSLCF2Ddata(chid, resultDir, quantityToExport,
@@ -753,16 +831,15 @@ def readSLCF2Ddata(chid, resultDir, quantityToExport,
     if '.zip' in resultDir:
         xyzFiles = getFileListFromZip(resultDir, chid, 'xyz')
     else:
-        xyzFiles = glob.glob("%s%s%s*.xyz"%(resultDir, os.sep, chid))
+        xyzFiles = glob.glob("%s%s%s*.sf"%(resultDir, os.sep, chid))
     grids = defaultdict(bool)
     endianness = getEndianness(resultDir, chid)
     datatype = getDatatypeByEndianness(np.float32, endianness)
-    
     for xyzFile in xyzFiles:
         grid, gridHeader = readXYZfile(xyzFile)
         xGrid, yGrid, zGrid = rearrangeGrid(grid)
         
-        mesh = xyzFile.split(chid)[-1].split('.xyz')[0].replace('_','')
+        mesh = xyzFile.split(chid)[-1].split('.sf')[0].replace('_','')
         meshStr = "%s"%(chid) if mesh == '' else "%s_%s"%(chid, mesh)
         if '.zip' in resultDir:
             slcfFiles = getFileListFromZip(resultDir, chid, 'sf')
@@ -873,10 +950,6 @@ def readSLCF2Ddata(chid, resultDir, quantityToExport,
                      :NT] = data[:, :, :, :NT]
         
     return grid_abs, data_abs, timesOut
-
-
-
-
 
 
 

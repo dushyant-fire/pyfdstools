@@ -18,6 +18,7 @@
 #=======================================================================
 # # IMPORTS
 #=======================================================================
+from enum import unique
 import numpy as np
 import matplotlib.colors as pltc
 import scipy.spatial as scsp
@@ -29,6 +30,10 @@ import glob
 import struct
 from collections import defaultdict
 from .colorSchemes import getVTcolors
+
+# Added by Dushyant
+import re
+from collections import Counter
 
 def timeAverage2(data, times, window):
     sz = data.shape
@@ -181,6 +186,45 @@ def smvVisual(obstructions,surfaces,namespace,fs=16,fig=None,ax=None,
     plt.savefig('%s_smvvisual.png'%(namespace),dpi=300)
     
     return fig, ax
+
+# Added by Dushyant
+def GetSMVGrid(file):
+    print('SMV Gridder')
+    with open(file,'r') as f:
+        lines = f.readlines()
+    inds = []
+    for i in range(0,len(lines)):
+        if lines[i][0] != ' ' and lines[i][0] != '-':
+            inds.append(i)
+    MESH_coords = {}
+    for ind in inds:
+        if 'GRID' in lines[ind]:
+            grid_number = lines[ind].split(" ")[-1].strip()
+            # print(grid_number)
+            Grid_nums = re.findall(r'\d+', lines[ind+1].strip())
+            PDIM = re.findall(r'[-+]?(?:\d*\.*\d+)',lines[ind+4].strip()) # Checking float
+            # print(Grid_nums,PDIM)
+            for n,i in enumerate(Grid_nums[:-1]): # Ignoring the last number and rgb for PDIMS
+                MESH_coords[(grid_number,str(n+1))] = (i,np.linspace(float(PDIM[n*2]),float(PDIM[n*2+1]),int(i)))
+    unique_coords = dict.fromkeys(['1','2','3'])
+    for key,items in MESH_coords.items():
+        # print(unique_coords[key[1]], items[1])
+        if unique_coords[key[1]] is None:
+            unique_coords[key[1]] = items[1]
+        elif Counter(list(unique_coords[key[1]])) == Counter(list(items[1])):
+            continue
+        else:
+            unique_coords[key[1]] = np.append(unique_coords[key[1]],items[1])
+
+    xs = unique_coords['1']
+    ys = unique_coords['2']
+    zs = unique_coords['3']
+    xGrid, yGrid, zGrid = np.meshgrid(xs, ys, zs)
+    xGrid = np.swapaxes(xGrid, 0, 1)
+    yGrid = np.swapaxes(yGrid, 0, 1)
+    zGrid = np.swapaxes(zGrid, 0, 1)
+    return unique_coords, xGrid,yGrid,zGrid
+
 
 def buildSMVgeometry(file):
     with open(file,'r') as f:
@@ -495,7 +539,7 @@ def readXYZfile(file):
     except FileNotFoundError:
         tmp = file[:-4].split('_')
         meshStr = str(int(tmp[-1]))
-        file2 = '%s_%s.xyz'%('_'.join(tmp[:-1]), meshStr)
+        file2 = '%s_%s.sf'%('_'.join(tmp[:-1]), meshStr)
         f = zopen(file2)
     header = struct.unpack('<iiiiif', f.read(24))
     (nx, ny, nz) = (header[1], header[2], header[3])

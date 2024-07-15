@@ -614,5 +614,6 @@ def runExamples():
 
 if __name__ == '__main__':
     #runExamples()
-    exampleAddGasPhaseHeatFluxSlice()
+    exampleReadSlcf2dResults()
+    # exampleAddGasPhaseHeatFluxSlice()
     #examplePostProcessVisibility()
