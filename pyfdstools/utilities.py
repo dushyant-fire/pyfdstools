@@ -189,7 +189,7 @@ def smvVisual(obstructions,surfaces,namespace,fs=16,fig=None,ax=None,
 
 # Added by Dushyant
 def GetSMVGrid(file):
-    print('SMV Gridder')
+    print('Getting Grid info from SMV file')
     with open(file,'r') as f:
         lines = f.readlines()
     inds = []
@@ -205,7 +205,7 @@ def GetSMVGrid(file):
             PDIM = re.findall(r'[-+]?(?:\d*\.*\d+)',lines[ind+4].strip()) # Checking float
             # print(Grid_nums,PDIM)
             for n,i in enumerate(Grid_nums[:-1]): # Ignoring the last number and rgb for PDIMS
-                MESH_coords[(grid_number,str(n+1))] = (i,np.linspace(float(PDIM[n*2]),float(PDIM[n*2+1]),int(i)))
+                MESH_coords[(grid_number,str(n+1))] = (i,np.linspace(float(PDIM[n*2]),float(PDIM[n*2+1]),int(i)+1))
     unique_coords = dict.fromkeys(['1','2','3'])
     for key,items in MESH_coords.items():
         # print(unique_coords[key[1]], items[1])
@@ -216,15 +216,19 @@ def GetSMVGrid(file):
         else:
             unique_coords[key[1]] = np.append(unique_coords[key[1]],items[1])
 
+    for key in unique_coords.keys():
+        print(unique_coords[key])
+        unique_coords[key] = np.array(list(set(unique_coords[key])))
+        print(unique_coords[key])
     xs = unique_coords['1']
     ys = unique_coords['2']
     zs = unique_coords['3']
+    # print(len(xs),len(ys),len(zs))
     xGrid, yGrid, zGrid = np.meshgrid(xs, ys, zs)
     xGrid = np.swapaxes(xGrid, 0, 1)
     yGrid = np.swapaxes(yGrid, 0, 1)
     zGrid = np.swapaxes(zGrid, 0, 1)
-    return unique_coords, xGrid,yGrid,zGrid
-
+    return MESH_coords, unique_coords, xGrid,yGrid,zGrid
 
 def buildSMVgeometry(file):
     with open(file,'r') as f:

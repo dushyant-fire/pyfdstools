@@ -34,6 +34,7 @@ from .smokeviewParser import parseSMVFile
 
 # Added by Dushyant on July 15th
 from .utilities import GetSMVGrid
+import re
 
 def time2str(time, decimals=2):
     """Converts a timestamp to a string
@@ -748,7 +749,7 @@ def readSLCF3Ddata(chid, resultDir, quantityToExport,
     return grid_abs, data_abs, times3D[0]
 
 
-def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
+def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,PB_dir,
                    time=None, dt=None):
     print("here")
     if '.zip' in resultDir:
@@ -760,19 +761,22 @@ def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
     endianness = getEndianness(resultDir, chid)
     datatype = getDatatypeByEndianness(np.float32, endianness)
 
-    grid_coords, xGrid,yGrid,zGrid = GetSMVGrid("%s%s%s.smv"%(resultDir,os.sep,chid))
-    print(xGrid.shape,yGrid.shape,zGrid.shape)
-    datas2D = []
-    lims2D = []
-    coords2D = []
-    times2D = []
+    SMV_allCoords, grid_coords, xGrid,yGrid,zGrid = GetSMVGrid("%s%s%s.smv"%(resultDir,os.sep,chid))
+    print(grid_coords)
+    
     for sl_file in sl_files:
-        mesh = sl_file.split(chid)[-1].split('.sf')[0].replace('_','')
+        datas2D = []
+        lims2D = []
+        coords2D = []
+        times2D = []
+        mesh = sl_file.split(chid)[-1].split('.sf')[0].split('_')[1]
         meshStr = "%s"%(chid) if mesh == '' else "%s_%s"%(chid, mesh)
         # print(mesh,meshStr)
+
         timesSLCF = readSLCFtimes(sl_file, None, endianness)
         # print(timesSLCF)
         times = []
+        
         f = zopen(sl_file)
         
         qty, sName, uts, iX, eX, iY, eY, iZ, eZ = readSLCFheader(f, endianness)
@@ -780,10 +784,37 @@ def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
         correctQuantity = (qty == quantityToExport)
         # Check if slice is 2-dimensional
         threeDimSlice = (eX-iX > 0) and (eY-iY > 0) and (eZ-iZ > 0)
-        if correctQuantity and not threeDimSlice:
-            print(qty, sName)
+        if PB_dir == 'X':
+            Dir_checker = not (eX - iX >0)
+        elif PB_dir == 'Y':
+            Dir_checker = not (eY - iY >0)
+        elif PB_dir == 'Z':
+            Dir_checker = not (eZ - iZ >0)
+        else:
+            raise AttributeError("PB_dir must be 'X','Y',or 'Z'")
+        if correctQuantity and not threeDimSlice and Dir_checker:
+            for (SMV_Mesh,Ori) in SMV_allCoords.keys():
+                if int(mesh) == int(re.findall(r'\d+',SMV_Mesh)[0]):
+                    mesh_slcf = SMV_Mesh
+                else:
+                    continue
+            print("Processing 2-D slice:", sl_file)
+            print(mesh_slcf)
+            grids[mesh_slcf] = defaultdict(bool)
+            xxs = SMV_allCoords[(mesh_slcf,'1')][1]
+            yys = SMV_allCoords[(mesh_slcf,'2')][1]
+            zzs = SMV_allCoords[(mesh_slcf,'3')][1]
+            xGrid, yGrid, zGrid = np.meshgrid(xxs, yys, zzs)
+            xGrid = np.swapaxes(xGrid, 0, 1)
+            yGrid = np.swapaxes(yGrid, 0, 1)
+            zGrid = np.swapaxes(zGrid, 0, 1)
+            # print(xGrid)
+            grids[mesh_slcf]['xGrid'] =  xGrid
+            grids[mesh_slcf]['yGrid'] = yGrid
+            grids[mesh_slcf]['zGrid'] = zGrid
+            print(qty, sName, uts, iX, eX, iY, eY, iZ, eZ)
             (NX, NY, NZ) = (eX-iX, eY-iY, eZ-iZ)
-            print("2-D slice:", sl_file)
+            
             shape = (NX+1, NY+1, NZ+1)
             if time == None:
                 NT = len(timesSLCF)
@@ -813,6 +844,7 @@ def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
                 if j - i > 0:
                     datas2[:, :, :, 0] = datas2[:, :, :, 0] / (j-i)
                 times = [timesSLCF[i]]
+            # print(datas2)
             lims2D.append([iX, eX, iY, eY, iZ, eZ])
             datas2D.append(datas2)
             coords2D.append([xGrid[iX, iY, iZ],
@@ -820,18 +852,71 @@ def read_SLCF_NonXYZ(chid, resultDir, quantityToExport,
                              zGrid[iX, iY, iZ]])
             times2D.append(np.array(times))
             timesOut = np.array(times)
-            # print(np.array(datas2D).shape)
+            print(np.array(datas2D).shape)
+            grids[mesh_slcf]['datas2D'] = datas2D
+            grids[mesh_slcf]['lims2D'] = lims2D
+            grids[mesh_slcf]['coords2D'] = coords2D
         f.close()
-        # 
-        # exit()
+    print('getting abs grid')
+    grid_abs = getAbsoluteGrid(grids)
+    print('got abs grid')
+    xGrid_abs = grid_abs[:, :, :, 0]
+    yGrid_abs = grid_abs[:, :, :, 1]
+    zGrid_abs = grid_abs[:, :, :, 2]
+    tInds = [] 
+    for i, key in enumerate(list(grids.keys())):
+        try:
+            tInd = grids[key]['datas2D'][0].shape[3]
+            tInds.append(tInd)
 
+        except:
+            pass
+    tInd = np.min(tInds)
+    data_abs = np.empty((xGrid_abs.shape[0],
+                         xGrid_abs.shape[1],
+                         xGrid_abs.shape[2],
+                         tInd))
+    print(data_abs.shape)
+    # data_abs[:, :, :, :] = np.nan
+    # print('there')
+    for key in list(grids.keys()):
+        print(key)
+        xGrid = grids[key]['xGrid']
+        yGrid = grids[key]['yGrid']
+        zGrid = grids[key]['zGrid']
+        datas2D = grids[key]['datas2D']
+        lims2D = grids[key]['lims2D']
+        coords2D = grids[key]['coords2D']
+        for data, coord in zip(datas2D, coords2D):
+            # print(coord)
+            xloc = np.where(np.isclose(
+                    abs(xGrid_abs - coord[0]), 0, atol=1e-04))[0][0]
+            yloc = np.where(np.isclose(
+                    abs(yGrid_abs - coord[1]), 0, atol=1e-04))[1][0]
+            zloc = np.where(np.isclose(
+                    abs(zGrid_abs - coord[2]), 0, atol=1e-04))[2][0]
+            (NX, NY, NZ, NT) = np.shape(data)
+            NT = min([NT, data_abs.shape[3]])
+            # print(xloc,yloc,zloc,NX,NY,NZ)
+            data_abs[xloc:xloc+NX,
+                     yloc:yloc+NY,
+                     zloc:zloc+NZ,
+                     :NT] = data[:, :, :, :NT]
+            print(xloc)
+    if PB_dir == 'X':
+        data_abs = data_abs[xloc,:,:,:]
+    elif PB_dir == 'Y':
+        data_abs = data_abs[:,yloc,:,:]
+    elif PB_dir == 'Z':
+        data_abs = data_abs[:,:,zloc,:]
+    return grid_abs, data_abs, timesOut, grid_coords
 
 def readSLCF2Ddata(chid, resultDir, quantityToExport,
                    time=None, dt=None):
     if '.zip' in resultDir:
         xyzFiles = getFileListFromZip(resultDir, chid, 'xyz')
     else:
-        xyzFiles = glob.glob("%s%s%s*.sf"%(resultDir, os.sep, chid))
+        xyzFiles = glob.glob("%s%s%s*.xyz"%(resultDir, os.sep, chid))
     grids = defaultdict(bool)
     endianness = getEndianness(resultDir, chid)
     datatype = getDatatypeByEndianness(np.float32, endianness)
@@ -839,7 +924,7 @@ def readSLCF2Ddata(chid, resultDir, quantityToExport,
         grid, gridHeader = readXYZfile(xyzFile)
         xGrid, yGrid, zGrid = rearrangeGrid(grid)
         
-        mesh = xyzFile.split(chid)[-1].split('.sf')[0].replace('_','')
+        mesh = xyzFile.split(chid)[-1].split('.xyz')[0].replace('_','')
         meshStr = "%s"%(chid) if mesh == '' else "%s_%s"%(chid, mesh)
         if '.zip' in resultDir:
             slcfFiles = getFileListFromZip(resultDir, chid, 'sf')
@@ -898,6 +983,7 @@ def readSLCF2Ddata(chid, resultDir, quantityToExport,
                     if j - i > 0:
                         datas2[:, :, :, 0] = datas2[:, :, :, 0] / (j-i)
                     times = [timesSLCF[i]]
+                
                 lims2D.append([iX, eX, iY, eY, iZ, eZ])
                 datas2D.append(datas2)
                 coords2D.append([xGrid[iX, iY, iZ],
@@ -983,6 +1069,7 @@ def readSLCFheader(f, endianness, byteSize=False):
     size = struct.unpack('%siiiiii'%(endianness), data[118:142])
     tmp = header.split(b'\x1e')
     quantity = tmp[1].decode('utf-8').replace('\x00','').strip(' ')
+    # print(quantity,'-VELOCITY' in quantity)
     shortName = tmp[3].decode('utf-8').replace('\x00','').strip(' ')
     units = tmp[5].decode('utf-8').replace('\x00','').strip(' ')
     

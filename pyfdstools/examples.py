@@ -31,6 +31,29 @@ def exampleImportFile(fdsPath=None):
     print("\tFinished importing file.")
     return fdsFile
 
+def ReadSlcf2dResultsfromSMV(resultDir=None, chid=None,
+                             fdsQuantities = ['TEMPERATURE'],
+                             tStart=0, tEnd=120):
+    if (resultDir is None) and (chid is None):
+        systemPath = os.path.dirname(os.path.abspath(__file__))
+        chid = "case001"        
+        resultDir = os.path.join(systemPath, "examples", "%s.zip"%(chid))
+    
+    datas = defaultdict(bool)
+    
+    for qty in fdsQuantities:
+        # print(fds.__dir__())
+        grid, data, times, grid_coords_array = fds.read_SLCF_NonXYZ(chid, resultDir, qty,'X')
+        print('received data')
+        tStartInd = np.argwhere(times >= tStart)[0][0]
+        tEndInd = np.argwhere(times <= tEnd)[-1][0]
+        data_tavg = np.nanmean(data[:, :, tStartInd:tEndInd], axis=2)
+        datas[qty] = data_tavg.copy()
+    datas['GRID'] = grid
+    datas['TIMES'] = times
+    datas['GRID_Array'] = grid_coords_array
+    
+    return datas
 
 def exampleSaveFile(file=None, outdir=None, outname=None):
     if file is None:
